@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Quota router</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="ui.css?v={{VERSION}}">
+<script src="ui.js?v={{VERSION}}" defer></script>
+</head>
+<body>
+<main class="app" id="app" hidden>
+  <header class="top">
+    <h1>Quota router</h1>
+    <p class="subtitle">Keeps Codex sessions on one account and moves them only when quota runs low.</p>
+  </header>
+
+  <section class="route" id="route" data-state="none">
+    <div class="route-text" aria-live="polite" aria-atomic="true">
+      <p class="route-lead"><span class="lamp" id="route-lamp" aria-hidden="true"></span>New requests go to</p>
+      <p class="route-account" id="route-account">Loading…</p>
+      <p class="route-why" id="route-why"></p>
+      <p class="route-elsewhere" id="route-elsewhere" hidden></p>
+    </div>
+    <div class="mode" role="group" aria-label="Routing mode">
+      <button type="button" id="mode-auto" aria-pressed="true">Automatic</button>
+      <button type="button" id="mode-manual" aria-pressed="false">Manual</button>
+    </div>
+  </section>
+
+  <p class="notice" id="notice" role="alert" hidden></p>
+
+  <section class="block" aria-labelledby="accounts-h">
+    <div class="block-head">
+      <h2 id="accounts-h">Accounts</h2>
+      <p class="hint" id="accounts-hint">Bars show remaining quota. The mark is your switch threshold.</p>
+    </div>
+    <ul class="accounts" id="accounts"></ul>
+  </section>
+
+  <section class="block windows" aria-labelledby="windows-h">
+    <div class="block-head">
+      <h2 id="windows-h">5-hour windows</h2>
+      <button type="button" class="link danger" id="win-off">Turn everything off</button>
+    </div>
+    <p class="win-intro" id="win-intro">A 5-hour window only starts at an account's first request. Start it on purpose with one tiny request, so it resets when you want.</p>
+    <div class="win-actions" role="group" aria-label="Start windows on every account">
+      <button type="button" class="btn" id="win-now">Start all now</button>
+      <form class="win-inline" id="win-delay-form">
+        <label for="win-delay">Start all in</label>
+        <input id="win-delay" type="number" min="1" max="1440" step="1" value="30" required>
+        <span>min</span>
+        <button type="submit" class="btn">Schedule</button>
+      </form>
+      <form class="win-inline" id="win-stagger-form">
+        <label for="win-stagger">Start one now, the rest every</label>
+        <input id="win-stagger" type="number" min="1" max="720" step="1" value="60" required>
+        <span>min</span>
+        <button type="submit" class="btn">Stagger</button>
+      </form>
+    </div>
+    <ul class="win-list" id="win-list"></ul>
+    <p class="win-cost" id="win-cost"></p>
+  </section>
+
+  <section class="block" aria-labelledby="history-h">
+    <div class="block-head">
+      <h2 id="history-h">Recent switches</h2>
+      <button type="button" class="link" id="history-toggle" hidden>Show all</button>
+    </div>
+    <ol class="history" id="history"></ol>
+  </section>
+
+  <details class="block prefs" id="prefs">
+    <summary><h2>Routing preferences</h2><span class="hint">Saved to config.yaml and applied immediately</span></summary>
+    <form id="prefs-form" novalidate>
+      <div class="field">
+        <label for="f-threshold">Switch accounts when remaining quota falls below</label>
+        <div class="input-unit"><input id="f-threshold" name="switch_threshold_percent" type="number" min="0" max="90" step="1" required><span>%</span></div>
+        <p class="help">Applies to both the 5-hour and the weekly window.</p>
+      </div>
+      <fieldset class="field order">
+        <legend>Choose the next account by</legend>
+        <p class="help">Most important first. Each line only decides between accounts that tie on the lines above it. Accounts below the threshold and reserve accounts always come last.</p>
+        <ol id="rank-list"></ol>
+      </fieldset>
+      <div class="field">
+        <div class="field-check">
+          <input id="f-switchback" name="switch_back" type="checkbox">
+          <label for="f-switchback">Switch to a better-ranked account when it clearly wins</label>
+        </div>
+        <p class="help">A clear win on the first line where they differ: higher in your order, a weekly reset at least a day sooner, a 5-hour reset at least 30 minutes sooner, or much more quota left (only when that line is on top).</p>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="f-margin">Only if it has this much headroom above the threshold</label>
+          <div class="input-unit"><input id="f-margin" name="switch_back_margin_percent" type="number" min="0" max="90" step="1"><span>%</span></div>
+        </div>
+        <div class="field">
+          <label for="f-dwell">And at least this long after the last switch</label>
+          <div class="input-unit"><input id="f-dwell" name="min_dwell_minutes" type="number" min="0" max="1440" step="1"><span>min</span></div>
+        </div>
+      </div>
+      <div class="field">
+        <label for="f-warm">Keep an idle session on its account for</label>
+        <div class="input-unit"><input id="f-warm" name="cache_warm_minutes" type="number" min="0" max="1440" step="1"><span>min</span></div>
+        <p class="help">While a session's prompt cache is warm it stays put, even if the current account changes.</p>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="f-fallback">If the pinned account is unavailable</label>
+          <select id="f-fallback" name="manual_fallback">
+            <option value="auto">Route automatically until it returns</option>
+            <option value="strict">Reject requests</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-poll">Check idle accounts' quota every</label>
+          <div class="input-unit"><input id="f-poll" name="quota_poll_minutes" type="number" min="0" max="1440" step="1"><span>min</span></div>
+          <p class="help">0 uses live traffic only.</p>
+        </div>
+      </div>
+      <fieldset class="field order">
+        <legend>Account order</legend>
+        <p class="help">Higher accounts are preferred. Reserve accounts are used only when no other account has quota. Off accounts are never chosen automatically.</p>
+        <ol id="order-list"></ol>
+      </fieldset>
+      <div class="form-actions">
+        <button type="submit" class="primary" id="prefs-save">Save preferences</button>
+        <button type="button" class="link" id="prefs-reset">Discard changes</button>
+      </div>
+    </form>
+  </details>
+
+  <footer class="foot">
+    <p id="foot-status"></p>
+    <button type="button" class="link" id="refresh">Refresh quota now</button>
+  </footer>
+</main>
+
+<div class="connect" id="connect" hidden>
+  <form class="connect-card" id="connect-form">
+    <h1>Quota router</h1>
+    <p>Enter the CLIProxyAPI management key to view and change routing.</p>
+    <label for="connect-key">Management key</label>
+    <input id="connect-key" type="password" autocomplete="current-password" required>
+    <div class="field-check">
+      <input id="connect-remember" type="checkbox">
+      <label for="connect-remember">Remember on this device</label>
+    </div>
+    <p class="connect-error" id="connect-error" role="alert" hidden></p>
+    <button type="submit" class="primary">Connect</button>
+  </form>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

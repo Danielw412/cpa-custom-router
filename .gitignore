@@ -1,0 +1,20 @@
+# Build output (.so, cgo headers, mock upstream)
+build/
+*.so
+*.h
+
+# Runtime data: never commit state, configs, credentials or logs
+state.json
+*.state.json
+config.yaml
+*.bak
+logs/
+*.log
+auths/
+
+# Local tooling
+__pycache__/
+*.pyc
+shots/
+.env
+.env.*
