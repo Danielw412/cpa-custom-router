@@ -88,14 +88,14 @@ func (e *Engine) windowState(id string, now time.Time) (string, time.Time) {
 	if a == nil {
 		return WindowUnknown, time.Time{}
 	}
-	if a.WindowUntil.After(now) {
+	var w *Window
+	if a.Quota != nil {
+		w = a.Quota.Short
+	}
+	if a.WindowUntil.After(now) && !windowReplaced(a.WindowUntil, w) {
 		return WindowRunning, a.WindowUntil
 	}
-	if a.Quota == nil || a.Quota.Short == nil {
-		return WindowUnknown, time.Time{}
-	}
-	w := a.Quota.Short
-	if w.ResetAt.IsZero() {
+	if w == nil || w.ResetAt.IsZero() {
 		return WindowUnknown, time.Time{}
 	}
 	if !now.Before(w.ResetAt) {
@@ -104,14 +104,29 @@ func (e *Engine) windowState(id string, now time.Time) (string, time.Time) {
 	if w.UsedPercent > 0 {
 		return WindowRunning, w.ResetAt
 	}
-	length := time.Duration(w.WindowMinutes) * time.Minute
-	if length <= 0 {
-		length = shortWindow
-	}
-	if w.ResetAt.Sub(w.ObservedAt) >= length-windowSlack {
+	if w.ResetAt.Sub(w.ObservedAt) >= windowLength(w)-windowSlack {
 		return WindowIdle, time.Time{} // reset keeps sliding: not started
 	}
 	return WindowRunning, w.ResetAt
+}
+
+// windowReplaced reports whether a reading taken after the window ending at
+// until began shows a different reset: Codex reset the limits early, so that
+// window is over. Right after a start a reading at 0% looks idle, which is why
+// until is trusted otherwise; a reading of that same window reports until.
+func windowReplaced(until time.Time, w *Window) bool {
+	if w == nil || w.ResetAt.IsZero() {
+		return false
+	}
+	start := until.Add(-windowLength(w))
+	return w.ObservedAt.After(start.Add(windowSlack)) && w.ResetAt.Sub(until).Abs() > windowSlack
+}
+
+func windowLength(w *Window) time.Duration {
+	if length := time.Duration(w.WindowMinutes) * time.Minute; length > 0 {
+		return length
+	}
+	return shortWindow
 }
 
 // startOrder lists accounts for "all accounts" actions: the current account

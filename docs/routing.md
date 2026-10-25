@@ -169,7 +169,11 @@ disable that cooldown. Real quota errors (429) still cool down as before. See
 ## 5-hour windows
 
 A Codex 5-hour window starts at an account's first request. Until then the
-reported reset time keeps sliding. The panel's **5-hour windows** section
+reported reset time keeps sliding. Once a request or a start has shown a
+window running, the router counts it as running until its reset, even if
+quota readings still show 0% used. If a later reading reports a different
+reset time, for example because Codex reset the limits early, the reading
+wins. The panel's **5-hour windows** section
 starts windows on purpose with one tiny request, so they reset when you want:
 
 * **Start all now:** every account whose window isn't already running.

@@ -216,6 +216,41 @@ func TestOutOfOrderUsageDoesNotOverwriteNewerQuota(t *testing.T) {
 	}
 }
 
+// Production 2026-10-25: Codex reset every account's limits early. C's window,
+// started at 01:00, still counted as running until 06:00, so at 05:44 a session
+// leaving B moved to C ("resets sooner") instead of A, whose real window ended
+// at 07:20 with almost all of it unused.
+func TestEarlyResetEndsTheWindowTheRouterTracked(t *testing.T) {
+	e, clk := newTestEngine(t, func(s *Settings) {
+		s.RankBy = []string{RankFiveHourReset, RankAccountOrder, RankWeeklyReset, RankMostRemaining}
+		s.AccountOrder = []string{accB, accC, accA}
+	})
+	quota(e, accB, 40, 30, 4*time.Hour, 5*24*time.Hour)
+	polled(e, accA, 0, 30, 5*time.Hour, 5*24*time.Hour)
+	polled(e, accC, 0, 30, 5*time.Hour, 5*24*time.Hour)
+	e.RecordStart(StartResult{At: clk.now(), Account: accC, Status: StartStarted, ResetAt: clk.now().Add(5 * time.Hour)})
+	mustRoute(t, pickFor(t, e, session("run")), accB)
+
+	// An hour later Codex resets the limits early. Other traffic starts a new
+	// window on A; C's window is idle again (its reset slides).
+	clk.add(time.Hour)
+	quota(e, accA, 1, 1, 5*time.Hour, 7*24*time.Hour)
+	polled(e, accC, 0, 0, 5*time.Hour, 7*24*time.Hour)
+	if s, _ := e.WindowState(accC); s != WindowIdle {
+		t.Fatalf("C's window was reset early but still counts as %s", s)
+	}
+
+	// Later B drops below the threshold: the session should use A's running
+	// window, not start C's idle one.
+	clk.add(2*time.Hour + 44*time.Minute)
+	polled(e, accC, 0, 0, 5*time.Hour, 7*24*time.Hour)
+	quota(e, accB, 96, 40, 16*time.Minute, 5*24*time.Hour)
+	mustRoute(t, pickFor(t, e, session("run")), accA)
+	if v := e.View(0); v.Active != accA {
+		t.Fatalf("active should be A, got %s", v.Active)
+	}
+}
+
 func cands(ids ...string) []Candidate {
 	out := make([]Candidate, 0, len(ids))
 	for _, id := range ids {

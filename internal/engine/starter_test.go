@@ -41,6 +41,42 @@ func TestWindowStateDetection(t *testing.T) {
 	}
 }
 
+func TestOnlyALaterReadingWithANewResetEndsAStartedWindow(t *testing.T) {
+	e, clk := newTestEngine(t, nil)
+	start := clk.now()
+	until := start.Add(5 * time.Hour)
+	e.RecordStart(StartResult{At: start, Account: accA, Status: StartStarted, ResetAt: until})
+	// A tiny start leaves 0% used; readings of that window report its reset.
+	clk.add(40 * time.Minute)
+	poll(e, accA, 0, until.Sub(clk.now()))
+	if s, at := e.WindowState(accA); s != WindowRunning || !at.Equal(until) {
+		t.Fatalf("started window read at 0%%: %s %v", s, at)
+	}
+	// Codex resets the limits early: the reset slides again.
+	clk.add(time.Hour)
+	poll(e, accA, 0, 5*time.Hour)
+	if s, _ := e.WindowState(accA); s != WindowIdle {
+		t.Fatalf("early reset should leave the window idle: %s", s)
+	}
+	// The next request starts a fresh window.
+	clk.add(time.Hour)
+	quota(e, accA, 1, 10, 5*time.Hour, 5*24*time.Hour)
+	if s, at := e.WindowState(accA); s != WindowRunning || !at.Equal(clk.now().Add(5*time.Hour)) {
+		t.Fatalf("new window after the early reset: %s %v", s, at)
+	}
+
+	// A window that was already running before a start reports its real,
+	// earlier reset; that wins over the start's estimate.
+	clk.add(time.Minute)
+	poll(e, accB, 30, 2*time.Hour)
+	e.RecordStart(StartResult{At: clk.now(), Account: accB, Status: StartStarted, ResetAt: clk.now().Add(5 * time.Hour)})
+	clk.add(10 * time.Minute)
+	poll(e, accB, 31, 110*time.Minute)
+	if s, at := e.WindowState(accB); s != WindowRunning || !at.Equal(clk.now().Add(110*time.Minute)) {
+		t.Fatalf("reading should correct the estimate: %s %v", s, at)
+	}
+}
+
 func TestPlanNowDelayAndStagger(t *testing.T) {
 	e, clk := newTestEngine(t, func(s *Settings) { s.AccountOrder = []string{accC, accB, accA} })
 	healthyAll(e)
