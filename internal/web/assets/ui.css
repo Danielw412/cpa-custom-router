@@ -235,6 +235,28 @@ select { max-width: 100%; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
+/* Pause and slow down */
+.flow-status { margin-top: 12px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.flow-lead { display: flex; align-items: center; gap: 9px; font-weight: 600; }
+.flow .lamp { background: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.flow[data-paused="true"] .flow-status { border-color: color-mix(in srgb, var(--caution-bar) 55%, var(--line)); }
+.flow[data-paused="true"] .lamp { background: var(--caution-bar); box-shadow: 0 0 0 3px rgba(217,162,27,.18); }
+.flow[data-slow="true"] .lamp { background: var(--bar); box-shadow: 0 0 0 3px var(--signal-soft); }
+.flow-detail { color: var(--ink-2); margin-top: 3px; max-width: 76ch; }
+.flow-detail:empty { display: none; }
+.flow-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; }
+.flow-row > label { color: var(--ink-2); }
+.flow-row .field-check { gap: 7px; }
+.flow-auto { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.flow-row .field-check label { color: var(--ink-2); }
+.flow-row .input-unit input { width: 4.6em; padding: 4px 7px; }
+.flow-row select { padding: 4px 7px; }
+.flow-row .primary { padding: 5px 14px; }
+.flow-help { margin-top: 6px; max-width: 80ch; }
+.route[data-paused="true"] .lamp { background: var(--caution-bar); box-shadow: 0 0 0 4px rgba(217,162,27,.18); }
+.history [data-kind="pause"] .glyph { background: var(--caution-bar); }
+.history [data-kind="slowdown"] .glyph { background: var(--bar); }
+
 /* 5-hour windows */
 .win-intro { color: var(--ink-2); margin-top: 10px; max-width: 72ch; }
 .win-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; margin-top: 12px; padding: 12px 14px;

@@ -18,6 +18,8 @@
   let draftRank = [];
   let lastRouting = null;
   let busy = false;
+  let pauseDirty = false;
+  let slowDirty = false;
 
   // ---------------------------------------------------------------- theme
   function parentTheme() {
@@ -211,6 +213,7 @@
     $('notice').hidden = notes.length === 0;
     $('notice').textContent = notes.join(' ');
 
+    renderFlow();
     renderAccounts(manual);
     renderWindows();
     renderHistory();
@@ -222,6 +225,77 @@
       (poll > 0 ? `Idle accounts are checked every ${poll} min` : 'Quota comes from live traffic only') +
       (isSet(state.last_poll) ? `, last check ${ago(state.last_poll)}.` : '.');
   }
+
+  // ---------------------------------------------------------------- pause
+  function renderFlow() {
+    const p = state.pause || null;
+    const slow = state.slow_down_seconds || 0;
+    const waiting = state.waiting || 0;
+    $('flow').dataset.paused = String(!!p);
+    $('flow').dataset.slow = String(!p && slow > 0);
+    $('route').dataset.paused = String(!!p);
+    $('route-lead-text').textContent = p ? 'Paused. When requests resume, they go to' : 'New requests go to';
+
+    const waitingText = waiting === 1 ? '1 request is waiting' : `${waiting} requests are waiting`;
+    const detail = [];
+    let head;
+    if (p) {
+      head = isSet(p.until) ? `Paused until ${clock(p.until)} (${until(p.until)})` : 'Paused until you resume';
+      detail.push(`Since ${clock(p.since)}. ${waiting ? waitingText : 'No requests are waiting'}.`);
+      if (p.auto_resume_minutes) {
+        detail.push(`Auto-resume every ${p.auto_resume_minutes} min lets each waiting conversation take one step, then pauses it again. Next ${clock(p.next_auto_resume)}.`);
+      } else {
+        detail.push('Auto-resume is off. A turn that waits a long time can stop with an error in Codex; type "continue" there after you resume, and its cache is still used.');
+      }
+      if (slow) detail.push(`After you resume, each request waits ${slow} s.`);
+    } else if (slow) {
+      head = `Slowed down: each request waits ${slow} s before it is sent`;
+      if (waiting) detail.push(`${waitingText}.`);
+    } else {
+      head = 'Running at full speed';
+    }
+    $('flow-state').textContent = head;
+    $('flow-detail').textContent = detail.join(' ');
+
+    // While paused, resuming is the main action.
+    $('pause-go').textContent = p ? 'Update pause' : 'Pause';
+    $('pause-go').className = p ? 'btn' : 'primary';
+    $('resume-go').className = p ? 'primary' : 'btn';
+    $('resume-go').hidden = !p;
+    const form = $('pause-form');
+    if (p && !pauseDirty && !form.contains(document.activeElement)) {
+      $('pause-auto').checked = p.auto_resume_minutes > 0;
+      if (p.auto_resume_minutes) $('pause-auto-minutes').value = p.auto_resume_minutes;
+    }
+    $('pause-auto-minutes').disabled = !$('pause-auto').checked;
+
+    $('slow-off').hidden = slow === 0;
+    if (!slowDirty && !$('slow-form').contains(document.activeElement)) $('slow-seconds').value = slow;
+  }
+
+  async function pauseNow(ev) {
+    ev.preventDefault();
+    const minutes = Number($('pause-minutes').value);
+    let auto = 0;
+    if ($('pause-auto').checked) {
+      auto = minutesFrom('pause-auto-minutes', 1, 24);
+      if (auto == null) { toast('Auto-resume must be every 1 to 24 minutes.', true); return; }
+    }
+    const was = !!(state && state.pause);
+    const label = $('pause-minutes').selectedOptions[0].textContent;
+    pauseDirty = false;
+    await act('pause', { minutes, auto_resume_minutes: auto },
+      was ? 'Pause updated' : (minutes ? `Paused for ${label}` : 'Paused until you resume'));
+  }
+  const resumeNow = () => { pauseDirty = false; return act('resume', {}, 'Resumed: waiting requests continue'); };
+  async function slowDown(ev) {
+    ev.preventDefault();
+    const s = minutesFrom('slow-seconds', 0, 240);
+    if (s == null) { toast('Enter 0 to 240 seconds.', true); return; }
+    slowDirty = false;
+    await act('slowdown', { seconds: s }, s ? `Each request now waits ${s} s` : 'Slow down is off');
+  }
+  const slowOff = () => { slowDirty = false; return act('slowdown', { seconds: 0 }, 'Slow down is off'); };
 
   function meter(name, w, threshold, active) {
     const known = !!w;
@@ -776,6 +850,13 @@
     $('win-delay-form').addEventListener('submit', startDelayed);
     $('win-stagger-form').addEventListener('submit', startStaggered);
     $('win-off').addEventListener('click', turnOff);
+    $('pause-form').addEventListener('submit', pauseNow);
+    $('pause-form').addEventListener('input', () => { pauseDirty = true; });
+    $('pause-auto').addEventListener('change', () => { $('pause-auto-minutes').disabled = !$('pause-auto').checked; });
+    $('resume-go').addEventListener('click', resumeNow);
+    $('slow-form').addEventListener('submit', slowDown);
+    $('slow-form').addEventListener('input', () => { slowDirty = true; });
+    $('slow-off').addEventListener('click', slowOff);
     $('prefs-form').addEventListener('submit', savePrefs);
     $('prefs-form').addEventListener('input', markDirty);
     $('f-switchback').addEventListener('change', syncSwitchBack);

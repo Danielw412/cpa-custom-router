@@ -105,6 +105,9 @@ func (s *Service) startWindow(ctx context.Context, p engine.StartPlan) engine.St
 		"stream":    false,
 	})
 	headers := map[string][]string{"Session_id": {oneOff}}
+	// A pause or slow down is for agents' requests, not for starts you scheduled.
+	s.held.setExempt(oneOff, true)
+	defer s.held.setExempt(oneOff, false)
 	sent := time.Now()
 	resp, err := s.Host.ModelExecute(starterProtocol, settings.WindowStartModel, body, headers, p.Account, starterTimeout)
 	if err == nil && resp.StatusCode != 0 && resp.StatusCode != 200 {

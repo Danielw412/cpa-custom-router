@@ -27,7 +27,7 @@ and [docs/routing.md](docs/routing.md).
 4. **Never fail a request because of the plugin.** On a panic, bad input or
    missing data, `scheduler.pick` returns `Handled: false` and CLIProxyAPI's
    own selector decides. Rejections are only for explicit user choices
-   (strict pin, every account *Off*).
+   (strict pin, every account *Off*, a paused request past its hold limit).
 5. **Respect provider limits.** Route only among credentials CLIProxyAPI
    offers. Never retry around a usage limit, disguise which account is
    used, or send requests beyond the documented 5-hour window starts.
@@ -54,7 +54,7 @@ version and the CLIProxyAPI module version must match the running binary.
 | `main.go` | cgo bridge only. Keep it thin; recover every panic before it crosses into C. |
 | `internal/engine/` | All routing policy. The `Engine` does no I/O, host calls or goroutines, and takes time only from `e.now()`. `store.go` (state file load/save) is called by the service, never by the engine. |
 | `internal/plugin/` | RPC dispatch and the registration manifest (setting descriptions shown in the dashboard). No cgo. |
-| `internal/service/` | Background loop, polling, window starts, persistence. The only place host callbacks run. |
+| `internal/service/` | Background loop, polling, window starts, persistence, and holding requests for a pause or slow down (`hold.go`). The only place host callbacks run. |
 | `internal/hostapi/` | Typed host callbacks; the transport is injected for tests. |
 | `internal/web/` | Management routes and the embedded panel (`assets/`). |
 | `scripts/deploy.py` | Production deploy. Edits `config.yaml` in place and minimally. |
@@ -64,7 +64,9 @@ version and the CLIProxyAPI module version must match the running binary.
 
 * **Keep the request path cheap.** `Engine.Pick` runs under one mutex for
   every proxied request: in-memory work only, with no I/O, logging or host
-  calls.
+  calls. The only deliberate wait is `service.Hold` for a pause or slow down
+  the user turned on. It waits outside the engine lock and must stay
+  bounded (hold limits, `MaxHeld`, release on quiesce and shutdown).
 * **Concurrency.** Exported engine methods take the lock and unexported
   helpers assume it. Never call the host or do I/O under the lock. Run tests
   with `-race`.

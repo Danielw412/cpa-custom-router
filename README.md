@@ -26,6 +26,10 @@ the plugin can be upgraded or removed independently, without a restart.
   flaps.
 * **Manual control.** *Use now*, *Pin*, and per-account *Normal*,
   *Reserve* and *Off* roles.
+* **Pause and slow down.** Hold every new request at the router (until you
+  resume or for a set time) without losing any session's account or cache.
+  Auto-resume lets each waiting conversation take a step every few minutes.
+  Slow down adds a wait you choose before each request.
 * **5-hour window starts.** Start or schedule an account's 5-hour window
   with one tiny request, so windows reset when you want them to.
 * **Live quota** from every response's rate-limit data, plus light polling

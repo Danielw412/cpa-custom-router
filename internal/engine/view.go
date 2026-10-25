@@ -77,6 +77,10 @@ type View struct {
 	Picks        int64            `json:"picks"`
 	PickStats    map[string]int64 `json:"pick_stats"`
 	LastPoll     time.Time        `json:"last_poll,omitempty"`
+	// Pause is set while new requests are held; SlowDownSeconds is the wait
+	// added before each request (0 = off).
+	Pause           *PauseView `json:"pause,omitempty"`
+	SlowDownSeconds int        `json:"slow_down_seconds"`
 }
 
 // View builds the UI state. historyLimit<=0 returns all history (newest first).
@@ -84,6 +88,7 @@ func (e *Engine) View(historyLimit int) View {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now := e.now()
+	e.expirePause(now)
 	warm := e.cacheWarm()
 
 	sessions := map[string]int{}
@@ -94,7 +99,8 @@ func (e *Engine) View(historyLimit int) View {
 	for _, b := range e.st.Families {
 		sessions[b.Account]++
 		idle := now.Sub(b.LastSeen)
-		if idle <= warm {
+		cold := e.idleFor(b, now) > warm // a pause does not cool a session
+		if !cold {
 			warmSessions[b.Account]++
 			totalWarm++
 		}
@@ -107,27 +113,29 @@ func (e *Engine) View(historyLimit int) View {
 				at = b.Account
 			}
 			busySessions[at]++
-		case idle <= warm:
+		case !cold:
 			idleSessions[b.Account]++
 		}
 	}
 
 	v := View{
-		Now:          now,
-		Mode:         e.st.Mode,
-		Pinned:       e.st.Pinned,
-		Active:       e.st.Active,
-		ActiveManual: e.st.ActiveManual,
-		ActiveReason: e.st.ActiveReason,
-		ActiveSince:  e.st.ActiveSince,
-		Settings:     e.settings,
-		Warnings:     append([]string(nil), e.warnings...),
-		Sessions:     len(e.st.Families),
-		WarmSessions: totalWarm,
-		Picks:        e.picks,
-		LastPoll:     e.lastPoll,
-		Accounts:     []AccountView{},
-		PickStats:    map[string]int64{},
+		Now:             now,
+		Mode:            e.st.Mode,
+		Pinned:          e.st.Pinned,
+		Active:          e.st.Active,
+		ActiveManual:    e.st.ActiveManual,
+		ActiveReason:    e.st.ActiveReason,
+		ActiveSince:     e.st.ActiveSince,
+		Settings:        e.settings,
+		Warnings:        append([]string(nil), e.warnings...),
+		Sessions:        len(e.st.Families),
+		WarmSessions:    totalWarm,
+		Picks:           e.picks,
+		LastPoll:        e.lastPoll,
+		Accounts:        []AccountView{},
+		PickStats:       map[string]int64{},
+		Pause:           e.pauseView(now),
+		SlowDownSeconds: e.st.SlowDownSeconds,
 	}
 	for k, n := range e.stats {
 		v.PickStats[k] = n

@@ -53,8 +53,12 @@ make check
   CLIProxyAPI's extractor, routing policy, ranking, switch-back rules, manual
   modes, window starts, persistence and concurrency.
 * `internal/plugin` drives the real RPC methods with a fake host: register,
-  pick, usage, management routes, window starts, quiesce (state flushed,
-  no secrets in it), bad input, and reconfigure keeping runtime state.
+  pick, usage, management routes, window starts, pause and slow down,
+  quiesce (state flushed, no secrets in it, held requests released), bad
+  input, and reconfigure keeping runtime state.
+* `internal/service` tests the request hold with real timers: resume, timed
+  pauses, slow down, hold limits per transport, the waiting cap, release on
+  stop and the window-start exemption.
 
 Engine tests use a fake clock and three example accounts
 (`alice@example.com`, `bob@example.com`, `carol@example.com`). Helpers in
@@ -90,7 +94,8 @@ production instance.
 
 * `e2e.py` checks authentication, manual pins, settings persistence through
   the config API, affinity and subagents, threshold switching, 429 failover,
-  WebSocket pinning and hot upgrade (`SO_NEXT`).
+  WebSocket pinning, pause, auto-resume and slow down over HTTP and
+  WebSocket, and hot upgrade (`SO_NEXT`).
 * `e2e_windows.py` checks 5-hour window starts, schedules and cancellation.
 
 To poke at staging by hand:

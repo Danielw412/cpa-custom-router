@@ -33,6 +33,11 @@ browser session. It shows:
 * **Sessions per account.** "*N sessions working now*" means a request in
   the last 5 minutes. "*N idle*" are sessions with a warm cache that are not
   working. Idle accounts show when they were last used.
+* **Pause and slow down:** *Pause* holds new requests (until you resume or
+  for a set time, with optional *Auto-resume every N min*), *Resume now*
+  lets them go, and *Slow down* adds a wait before each request. The status
+  line shows how many requests are waiting and when the next auto-resume
+  is ([routing.md](routing.md#pause-and-slow-down)).
 * **Buttons:** *Use now* (make this account current, stay automatic), *Pin*
   (manual mode: send everything here) and *Automatic*.
 * **Preferences:** ranking, threshold, account order and roles.
@@ -51,13 +56,16 @@ management key (`Authorization: Bearer <key>`) and obeys
 
 | Method and path | Body | Does |
 | --- | --- | --- |
-| `GET /v0/management/custom-quota-router/state?history=N` | | Full panel state: accounts, sessions, settings, history. |
+| `GET /v0/management/custom-quota-router/state?history=N` | | Full panel state: accounts, sessions, settings, history, pause, slow down and waiting requests. |
 | `POST /v0/management/custom-quota-router/mode` | `{"mode":"auto"}` or `{"mode":"manual","account":"<auth id>"}` | Automatic mode, or pin one account. |
 | `POST /v0/management/custom-quota-router/select` | `{"account":"<auth id>"}` | *Use now*: make an account current. |
 | `POST /v0/management/custom-quota-router/refresh` | | Re-check every account's quota now. |
 | `POST /v0/management/custom-quota-router/windows/start` | `{"delay_minutes":0,"stagger_minutes":0,"account":""}` | Start 5-hour windows (empty account means all). |
 | `POST /v0/management/custom-quota-router/windows/schedule` | `{"account":"<auth id>","at":"<RFC 3339>","daily":true}` | Schedule a start. |
 | `POST /v0/management/custom-quota-router/windows/cancel` | `{"id":"<plan id>"}`, `{"account":"<auth id>"}` or `{}` | Cancel one start, an account's starts, or everything. |
+| `POST /v0/management/custom-quota-router/pause` | `{"minutes":0,"auto_resume_minutes":20}` | Pause new requests. `minutes` 0 means until resumed (max 1440). `auto_resume_minutes` 0 is off (max 24). While paused, this changes the timer and auto-resume. |
+| `POST /v0/management/custom-quota-router/resume` | | End the pause. Waiting requests continue. |
+| `POST /v0/management/custom-quota-router/slowdown` | `{"seconds":30}` | Wait this long before each request (0 is off, max 240). |
 
 The panel files (`/v0/resource/plugins/custom-quota-router/ui`, `ui.js`,
 `ui.css`) are static and contain no data, so they are served without
@@ -193,3 +201,6 @@ Typical answers:
 | Dashboard *Logs* page says file logging is required | Turn on `observability.logs.logging-to-file` ([configuration.md](configuration.md#recommended-cliproxyapi-settings)). |
 | Requests rejected with `quota_router_pinned_unavailable` | Manual mode with `manual_fallback: strict` and the pinned account unavailable. Switch to *Automatic* or `auto` fallback. |
 | Requests rejected with `quota_router_no_account` | Every available Codex account is set to *Off*. |
+| Requests rejected with `quota_router_paused` | Requests are paused and one waited past its limit (25 min over HTTP, 290 s over WebSocket), too many were waiting, or the plugin was upgraded mid-pause. The client retries. *Resume now*, or turn on auto-resume. |
+| Agents seem stuck, nothing reaches the upstream | The panel's *Pause and slow down* status: a pause or a long slow down may be on. |
+| Requests still held after turning the plugin off mid-pause | CLIProxyAPI waits for calls into the plugin to return before unloading it. Held requests end when the pause timer runs out or when they reach their hold limit (25 min at most). Resume before turning the plugin off. |

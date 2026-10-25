@@ -141,12 +141,17 @@ func (p *Plugin) pick(raw []byte) (out []byte, ok bool) {
 	for _, c := range req.Candidates {
 		cands = append(cands, engine.Candidate{ID: c.ID, Provider: c.Provider, Priority: c.Priority, Status: c.Status})
 	}
-	res := svc.Engine.Pick(engine.PickRequest{
+	preq := engine.PickRequest{
 		Candidates: cands,
 		Headers:    req.Options.Headers,
 		Metadata:   req.Options.Metadata,
 		Model:      req.Model,
-	})
+	}
+	// While paused or slowed down this waits; it never holds the engine lock.
+	if reason := svc.Hold(preq); reason != "" {
+		return okEnvelope(pluginapi.SchedulerPickResponse{Handled: true, Reject: true, RejectCode: service.RejectPaused, RejectReason: reason})
+	}
+	res := svc.Engine.Pick(preq)
 	return okEnvelope(pluginapi.SchedulerPickResponse{
 		AuthID:       res.AuthID,
 		Handled:      res.Handled,
@@ -202,6 +207,9 @@ func (b backend) Engine() *engine.Engine { return b.svc.Engine }
 func (b backend) RequestPoll()           { b.svc.RequestPoll() }
 func (b backend) WakeStarter()           { b.svc.WakeStarter() }
 func (b backend) LastError() string      { return b.svc.LastError() }
+func (b backend) WakeHeld()              { b.svc.WakeHeld() }
+func (b backend) Waiting() int           { return b.svc.Waiting() }
+func (b backend) Persist()               { b.svc.Flush() }
 
 func (p *Plugin) management(raw []byte) ([]byte, bool) {
 	svc := p.service()

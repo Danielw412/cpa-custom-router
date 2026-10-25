@@ -149,6 +149,61 @@ Set `routing.cooldown.transient-error-cooldown-seconds: -1` in CLIProxyAPI to
 disable that cooldown. Real quota errors (429) still cool down as before. See
 [configuration.md](configuration.md#recommended-cliproxyapi-settings).
 
+## Pause and slow down
+
+The panel's **Pause and slow down** section holds requests at the router.
+Nothing reaches OpenAI until a request is let go, so no quota is used while
+paused.
+
+**Pause.** New Codex requests wait inside `scheduler.pick`. CLIProxyAPI
+sends nothing to the client or upstream until pick returns. Replies that
+are already streaming finish normally.
+
+* **How long:** until you resume, or for a set time (15 minutes to 8 hours
+  in the panel, up to 24 hours through the API). A timed pause ends on its
+  own.
+* **Sessions keep their account.** Paused time doesn't count as idle, so
+  `cache_warm_minutes` never moves a session to another account because of
+  a pause, and idle sessions are not forgotten while paused.
+* **Auto-resume** (on by default, every 20 minutes, 1–24): at each interval
+  every waiting request goes, one step per conversation, then the next
+  request waits again. This keeps a long pause from ending turns and
+  refreshes each conversation's prompt cache.
+* **Window starts are never held.** Starts you scheduled still go out on
+  time.
+
+**How long a held request waits.** Clients don't wait forever, so a paused
+request that is never let through is ended with a retryable error. The
+client retries and the retry waits again.
+
+| Transport | Held for at most | Why |
+| --- | --- | --- |
+| HTTP | 25 minutes | Codex keeps waiting for a response that hasn't started (measured: still waiting, with no retry, after 26 minutes), so holding costs nothing. The limit is longer than the longest auto-resume interval, so with auto-resume on, an HTTP request is always let through before it would be ended. |
+| WebSocket | 290 seconds | Codex drops a WebSocket turn after exactly 5 minutes without an event, reconnects and sends the turn again. Ending it at 290 seconds causes the same quiet reconnect without leaving an abandoned request held. After 5 reconnects in a row, Codex falls back to HTTP for the rest of the session. |
+
+Measured on 2026-10-25 with Codex CLI 0.164 and CLIProxyAPI 8.0.42: a
+7-minute pause with auto-resume off, and a pause with auto-resume every
+minute. Both HTTP and WebSocket turns completed with no error shown in
+Codex. Codex also opens each WebSocket with a warm-up request it abandons
+after 15 seconds, so while paused a new socket takes about 15 seconds
+longer to connect.
+
+Without auto-resume, a long pause can end a turn with an error in Codex
+after its retries run out. The conversation and its cache are intact: type
+"continue" after you resume.
+
+At most 200 requests wait at once. Past that, the longest-waiting one (most
+likely abandoned by its client) is ended. When the plugin is upgraded,
+waiting requests are ended with a retryable error. Their retries reach the
+new version, which is still paused.
+
+**Slow down** makes every Codex request wait a set number of seconds
+(0–240) before it is sent. Every step an agent takes is delayed, so work
+spreads over more time. Each step still costs the same quota: slowing down
+changes *when* quota is used, not how much. It can keep you under a 5-hour
+limit until it resets. Requests paused longer than the slow-down are not
+delayed again when they are let go.
+
 ## Quota data
 
 * **Passive.** Every completed request reports Codex's rate-limit data: HTTP

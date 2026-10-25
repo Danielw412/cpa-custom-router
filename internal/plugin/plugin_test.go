@@ -449,3 +449,107 @@ func TestWindowStartsThroughRPC(t *testing.T) {
 		t.Fatalf("turn everything off left plans: %+v", v.Starter.Plans)
 	}
 }
+
+func TestPauseAndSlowDownThroughRPC(t *testing.T) {
+	p, _, statePath := setup(t)
+	const api = "/v0/management/custom-quota-router"
+	pick := pluginapi.SchedulerPickRequest{
+		Provider: "codex", Model: "gpt-6.1-sol",
+		Options:    pluginapi.SchedulerOptions{Headers: map[string][]string{"Session_id": {"sess-p"}}},
+		Candidates: []pluginapi.SchedulerAuthCandidate{{ID: idA, Provider: "codex"}, {ID: idB, Provider: "codex"}},
+	}
+	pickAsync := func() <-chan pluginapi.SchedulerPickResponse {
+		out := make(chan pluginapi.SchedulerPickResponse, 1)
+		go func() {
+			raw, _ := json.Marshal(pick)
+			res, _ := p.Handle("scheduler.pick", raw)
+			var env struct {
+				Result pluginapi.SchedulerPickResponse
+			}
+			_ = json.Unmarshal(res, &env)
+			out <- env.Result
+		}()
+		return out
+	}
+	type view struct {
+		Pause *struct {
+			AutoResumeMinutes int `json:"auto_resume_minutes"`
+		}
+		SlowDownSeconds int `json:"slow_down_seconds"`
+		Waiting         int
+	}
+	state := func() view {
+		_, _, body := mgmt(t, p, "GET", api+"/state", nil)
+		var v view
+		_ = json.Unmarshal(body, &v)
+		return v
+	}
+
+	for _, bad := range []struct {
+		path string
+		body any
+	}{
+		{"/pause", map[string]int{"minutes": 2000}},
+		{"/pause", map[string]int{"auto_resume_minutes": 25}},
+		{"/pause", map[string]any{"minutes": 5, "extra": true}},
+		{"/slowdown", map[string]int{"seconds": 241}},
+		{"/slowdown", map[string]int{"seconds": -1}},
+	} {
+		if status, _, _ := mgmt(t, p, "POST", api+bad.path, bad.body); status != 400 {
+			t.Errorf("POST %s %v = %d, want 400", bad.path, bad.body, status)
+		}
+	}
+
+	if status, _, _ := mgmt(t, p, "POST", api+"/pause", map[string]int{"minutes": 0, "auto_resume_minutes": 20}); status != 200 {
+		t.Fatalf("pause status %d", status)
+	}
+	if v := state(); v.Pause == nil || v.Pause.AutoResumeMinutes != 20 {
+		t.Fatalf("state after pause: %+v", v)
+	}
+	if raw, err := os.ReadFile(statePath); err != nil || !strings.Contains(string(raw), `"pause"`) {
+		t.Fatalf("pause not saved right away: %v", err)
+	}
+
+	held := pickAsync()
+	waitFor(t, "a held request", func() bool { return state().Waiting == 1 })
+	select {
+	case r := <-held:
+		t.Fatalf("pick returned while paused: %+v", r)
+	default:
+	}
+	if status, _, _ := mgmt(t, p, "POST", api+"/resume", nil); status != 200 {
+		t.Fatalf("resume status %d", status)
+	}
+	select {
+	case r := <-held:
+		if !r.Handled || r.Reject || r.AuthID == "" {
+			t.Fatalf("resumed pick = %+v", r)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("pick still held after resume")
+	}
+
+	if status, _, _ := mgmt(t, p, "POST", api+"/slowdown", map[string]int{"seconds": 1}); status != 200 {
+		t.Fatalf("slowdown status %d", status)
+	}
+	start := time.Now()
+	if r := <-pickAsync(); !r.Handled || r.Reject || time.Since(start) < 900*time.Millisecond {
+		t.Fatalf("slowed pick = %+v after %v", r, time.Since(start))
+	}
+	mgmt(t, p, "POST", api+"/slowdown", map[string]int{"seconds": 0})
+
+	// A hot upgrade ends held requests with a retryable rejection, so the
+	// host can retire this instance and the retries reach the successor.
+	mgmt(t, p, "POST", api+"/pause", map[string]int{"minutes": 30})
+	held = pickAsync()
+	waitFor(t, "a held request", func() bool { return state().Waiting == 1 })
+	call(t, p, "plugin.quiesce", map[string]any{})
+	select {
+	case r := <-held:
+		if !r.Handled || !r.Reject || r.RejectCode != "quota_router_paused" {
+			t.Fatalf("held pick on quiesce = %+v, want a paused rejection", r)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("quiesce left a request held")
+	}
+}

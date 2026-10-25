@@ -18,7 +18,7 @@
 
   <section class="route" id="route" data-state="none">
     <div class="route-text" aria-live="polite" aria-atomic="true">
-      <p class="route-lead"><span class="lamp" id="route-lamp" aria-hidden="true"></span>New requests go to</p>
+      <p class="route-lead"><span class="lamp" id="route-lamp" aria-hidden="true"></span><span id="route-lead-text">New requests go to</span></p>
       <p class="route-account" id="route-account">Loading…</p>
       <p class="route-why" id="route-why"></p>
       <p class="route-elsewhere" id="route-elsewhere" hidden></p>
@@ -30,6 +30,46 @@
   </section>
 
   <p class="notice" id="notice" role="alert" hidden></p>
+
+  <section class="block flow" id="flow" data-paused="false" aria-labelledby="flow-h">
+    <div class="block-head">
+      <h2 id="flow-h">Pause and slow down</h2>
+      <p class="hint">Requests wait here, so nothing reaches OpenAI until they go</p>
+    </div>
+    <div class="flow-status" aria-live="polite">
+      <p class="flow-lead"><span class="lamp" aria-hidden="true"></span><span id="flow-state">Loading…</span></p>
+      <p class="flow-detail" id="flow-detail"></p>
+    </div>
+    <form class="flow-row" id="pause-form" novalidate>
+      <label for="pause-minutes">Pause for</label>
+      <select id="pause-minutes">
+        <option value="0">until I resume</option>
+        <option value="15">15 min</option>
+        <option value="30">30 min</option>
+        <option value="60">1 hour</option>
+        <option value="120">2 hours</option>
+        <option value="240">4 hours</option>
+        <option value="480">8 hours</option>
+      </select>
+      <span class="flow-auto">
+        <span class="field-check">
+          <input id="pause-auto" type="checkbox" checked>
+          <label for="pause-auto">Auto-resume every</label>
+        </span>
+        <span class="input-unit"><input id="pause-auto-minutes" type="number" min="1" max="24" step="1" value="20" aria-label="Auto-resume interval in minutes"><span>min</span></span>
+      </span>
+      <button type="submit" class="primary" id="pause-go">Pause</button>
+      <button type="button" class="btn" id="resume-go" hidden>Resume now</button>
+    </form>
+    <p class="help flow-help">Replies already streaming finish. Paused time doesn't count toward the idle time that moves a session to another account, so every conversation keeps its account and prompt cache. Auto-resume lets each waiting conversation take one step, then holds it again, so a long pause doesn't end turns and each prompt cache is used again.</p>
+    <form class="flow-row" id="slow-form" novalidate>
+      <label for="slow-seconds">Slow down: wait</label>
+      <span class="input-unit"><input id="slow-seconds" type="number" min="0" max="240" step="1" value="0"><span>seconds before each request</span></span>
+      <button type="submit" class="btn" id="slow-go">Apply</button>
+      <button type="button" class="link" id="slow-off" hidden>Turn off</button>
+    </form>
+    <p class="help flow-help">Every step an agent takes waits this long first. Agents run slower and use quota over a longer time; each step costs the same. 0 is full speed, 240 the most.</p>
+  </section>
 
   <section class="block" aria-labelledby="accounts-h">
     <div class="block-head">

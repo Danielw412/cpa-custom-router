@@ -79,7 +79,10 @@ The state file holds what must survive restarts and hot upgrades:
 * session bindings and parent links;
 * the last known quota per account;
 * routing history;
-* window-start plans and results.
+* window-start plans and results;
+* a pause in progress (start, timer, auto-resume) and the slow-down
+  seconds. These are runtime controls set from the panel or API, not
+  `config.yaml` settings, so they survive restarts and hot upgrades.
 
 It is written atomically with mode `0600` every 15 seconds when something
 changed, and on shutdown or upgrade. It contains auth IDs, email labels, plan

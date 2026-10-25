@@ -7,6 +7,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -31,6 +32,11 @@ type Backend interface {
 	RequestPoll()
 	WakeStarter()
 	LastError() string
+	// WakeHeld makes held requests re-check a changed pause or slow down,
+	// Waiting counts them, and Persist saves state right away.
+	WakeHeld()
+	Waiting() int
+	Persist()
 }
 
 // Response mirrors pluginapi.ManagementResponse.
@@ -58,13 +64,16 @@ func ManagementRoutes() []Route {
 		{Method: "POST", Path: APIBase + "/windows/start"},
 		{Method: "POST", Path: APIBase + "/windows/schedule"},
 		{Method: "POST", Path: APIBase + "/windows/cancel"},
+		{Method: "POST", Path: APIBase + "/pause"},
+		{Method: "POST", Path: APIBase + "/resume"},
+		{Method: "POST", Path: APIBase + "/slowdown"},
 	}
 }
 
 // ResourceRoutes are the static panel files; "/ui" appears in the dashboard menu.
 func ResourceRoutes() []Route {
 	return []Route{
-		{Path: ResourceBase + "/ui", Menu: "Quota Router", Description: "Quota-aware Codex account routing: mode, current account, preferences and switch history."},
+		{Path: ResourceBase + "/ui", Menu: "Quota Router", Description: "Quota-aware Codex account routing: mode, current account, pause and slow down, preferences and switch history."},
 		{Path: ResourceBase + "/ui.css"},
 		{Path: ResourceBase + "/ui.js"},
 	}
@@ -170,18 +179,58 @@ func Handle(b Backend, version, method, path string, query url.Values, body []by
 		}
 		b.WakeStarter()
 		return stateResponse(b, version, 200)
+	case path == APIBase+"/pause" && method == http.MethodPost:
+		var req struct {
+			Minutes           int `json:"minutes"`
+			AutoResumeMinutes int `json:"auto_resume_minutes"`
+		}
+		if err := decode(body, &req); err != nil {
+			return jsonError(http.StatusBadRequest, err.Error())
+		}
+		if err := b.Engine().Pause(time.Duration(req.Minutes)*time.Minute, req.AutoResumeMinutes); err != nil {
+			return jsonError(http.StatusBadRequest, fmt.Sprintf("pause for 0 (until resumed) to %d minutes, with auto-resume 0 (off) to %d minutes",
+				int(engine.MaxPause/time.Minute), engine.MaxAutoResumeMinutes))
+		}
+		return changed(b, version)
+	case path == APIBase+"/resume" && method == http.MethodPost:
+		if err := decode(body, &struct{}{}); err != nil {
+			return jsonError(http.StatusBadRequest, err.Error())
+		}
+		b.Engine().Resume()
+		return changed(b, version)
+	case path == APIBase+"/slowdown" && method == http.MethodPost:
+		var req struct {
+			Seconds int `json:"seconds"`
+		}
+		if err := decode(body, &req); err != nil {
+			return jsonError(http.StatusBadRequest, err.Error())
+		}
+		if err := b.Engine().SetSlowDown(req.Seconds); err != nil {
+			return jsonError(http.StatusBadRequest, fmt.Sprintf("slow down must be 0 (off) to %d seconds", engine.MaxSlowDownSeconds))
+		}
+		return changed(b, version)
 	}
 	return jsonError(http.StatusNotFound, "not found")
+}
+
+// changed applies a pause or slow-down change to held requests at once and
+// saves it, so a reload right after keeps it.
+func changed(b Backend, version string) Response {
+	b.WakeHeld()
+	b.Persist()
+	return stateResponse(b, version, 200)
 }
 
 type stateBody struct {
 	engine.View
 	Version   string `json:"version"`
 	LastError string `json:"last_error,omitempty"`
+	// Waiting counts requests held by a pause or slow down right now.
+	Waiting int `json:"waiting"`
 }
 
 func stateResponse(b Backend, version string, historyLimit int) Response {
-	body, err := json.Marshal(stateBody{View: b.Engine().View(historyLimit), Version: version, LastError: b.LastError()})
+	body, err := json.Marshal(stateBody{View: b.Engine().View(historyLimit), Version: version, LastError: b.LastError(), Waiting: b.Waiting()})
 	if err != nil {
 		return jsonError(http.StatusInternalServerError, "encode state failed")
 	}

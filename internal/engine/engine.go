@@ -185,6 +185,10 @@ type State struct {
 	Accounts         map[string]*Account `json:"accounts"`
 	Starts           []StartPlan         `json:"starts,omitempty"`
 	StartLog         []StartResult       `json:"start_log,omitempty"`
+	// Pause, when set, holds new requests at the router (see pause.go).
+	Pause *Pause `json:"pause,omitempty"`
+	// SlowDownSeconds makes every request wait this long before it is sent.
+	SlowDownSeconds int `json:"slow_down_seconds,omitempty"`
 }
 
 // Engine is safe for concurrent use.
@@ -269,6 +273,15 @@ func (e *Engine) Restore(st State) {
 		}
 		a.ID = id
 	}
+	if st.Pause != nil && st.Pause.Since.IsZero() {
+		st.Pause = nil
+	}
+	if st.Pause != nil && (st.Pause.AutoResumeMinutes < 0 || st.Pause.AutoResumeMinutes > MaxAutoResumeMinutes) {
+		st.Pause.AutoResumeMinutes = 0
+	}
+	if st.SlowDownSeconds < 0 || st.SlowDownSeconds > MaxSlowDownSeconds {
+		st.SlowDownSeconds = 0
+	}
 	st.Version = 1
 	e.st = st
 	e.trimHistory()
@@ -309,6 +322,10 @@ func (e *Engine) Export() (State, bool) {
 	}
 	st.Starts = append([]StartPlan(nil), e.st.Starts...)
 	st.StartLog = append([]StartResult(nil), e.st.StartLog...)
+	if e.st.Pause != nil {
+		p := *e.st.Pause
+		st.Pause = &p
+	}
 	return st, dirty
 }
 
@@ -508,7 +525,7 @@ func (e *Engine) decide(family string, avail map[string]bool, now time.Time) (st
 	}
 
 	x := b.Account
-	idle := now.Sub(b.LastSeen)
+	idle := e.idleFor(b, now)
 	b.LastSeen = now
 	b.Requests++
 	switch {
@@ -1337,6 +1354,7 @@ func (e *Engine) Tick() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now := e.now()
+	e.expirePause(now)
 	for _, a := range e.st.Accounts {
 		if !a.BlockedUntil.IsZero() && !a.BlockedUntil.After(now) {
 			a.BlockedUntil = time.Time{}
@@ -1352,16 +1370,20 @@ func (e *Engine) Tick() {
 		e.noteHealth(a, now)
 	}
 	e.evaluateActive(now)
-	for k, b := range e.st.Families {
-		if now.Sub(b.LastSeen) > familyTTL {
-			delete(e.st.Families, k)
-			e.dirty = true
+	// Paused sessions are not idle; forgetting them would cost their cache.
+	// The size caps below still apply.
+	if e.st.Pause == nil {
+		for k, b := range e.st.Families {
+			if now.Sub(b.LastSeen) > familyTTL {
+				delete(e.st.Families, k)
+				e.dirty = true
+			}
 		}
-	}
-	for k, l := range e.st.Links {
-		if now.Sub(l.Seen) > familyTTL {
-			delete(e.st.Links, k)
-			e.dirty = true
+		for k, l := range e.st.Links {
+			if now.Sub(l.Seen) > familyTTL {
+				delete(e.st.Links, k)
+				e.dirty = true
+			}
 		}
 	}
 	if len(e.st.Links) > maxLinks {

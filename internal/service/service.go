@@ -40,6 +40,7 @@ type Service struct {
 	startWake chan struct{}
 	lastErr   string
 	retired   bool
+	held      *holder
 }
 
 // New creates a service from the plugin's YAML config and restores state.
@@ -51,6 +52,7 @@ func New(configYAML []byte, host *hostapi.Client) *Service {
 		statePath: settings.StateFile,
 		pollNow:   make(chan struct{}, 1),
 		startWake: make(chan struct{}, 1),
+		held:      newHolder(),
 	}
 	if st, ok, err := engine.LoadState(settings.StateFile); err != nil {
 		s.lastErr = err.Error()
@@ -80,6 +82,7 @@ func (s *Service) Start() {
 		return
 	}
 	s.retired = false
+	s.held.start()
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.done = make(chan struct{})
@@ -93,8 +96,11 @@ func (s *Service) Start() {
 	}(s.done)
 }
 
-// Stop halts the loop and flushes state (quiesce/shutdown).
+// Stop halts the loop and flushes state (quiesce/shutdown). Held requests
+// are let go first: the host waits for every call into this instance to
+// return before it finishes shutting it down.
 func (s *Service) Stop() {
+	s.held.stop()
 	s.mu.Lock()
 	cancel, done := s.cancel, s.done
 	s.cancel, s.done = nil, nil

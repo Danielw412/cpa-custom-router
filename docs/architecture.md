@@ -64,17 +64,29 @@ Rules that keep this layering useful:
 1. A client request reaches CLIProxyAPI, which builds the candidate list of
    credentials and calls `scheduler.pick` with the candidates, the request
    headers and metadata (including `pinned_auth_id` for a pinned WebSocket).
-2. `plugin.pick` converts the request and calls `engine.Pick`, which holds
-   the engine mutex for the decision. The decision is in-memory only, with
-   no I/O and no host calls on the request path.
-3. The engine returns an auth ID (`Handled: true`), a rejection, or
+2. `plugin.pick` converts the request. While requests are paused or
+   slowed down, `service.Hold` waits first (`internal/service/hold.go`). It
+   reads the pause state through `engine.Gate` and waits on timers and
+   wake-ups, never under the engine lock. Window starts and non-Codex
+   requests are never held.
+3. `plugin.pick` then calls `engine.Pick`, which holds the engine mutex for
+   the decision. The decision is in-memory only, with no I/O and no host
+   calls on the request path.
+4. The engine returns an auth ID (`Handled: true`), a rejection, or
    `Handled: false` to let CLIProxyAPI's built-in selector decide.
-4. After the response, CLIProxyAPI calls `usage.handle` with the usage
+5. After the response, CLIProxyAPI calls `usage.handle` with the usage
    record. The plugin reads the `x-codex-*` rate-limit data or the failure
    body, and the engine updates that account's quota.
 
 Any panic or malformed input in `pick` returns `Handled: false`, so a plugin
 bug degrades to CLIProxyAPI's default routing rather than failing requests.
+A panic in `Hold` lets the request go unheld.
+
+A held request occupies one CLIProxyAPI goroutine and its thread inside the
+plugin call. CLIProxyAPI gives the call no deadline and doesn't tell the
+plugin when the client goes away, so `Hold` bounds itself: per-transport hold
+limits, at most 200 waiting requests, and release on quiesce and shutdown
+([routing.md](routing.md#pause-and-slow-down)).
 
 ## Background work
 
@@ -92,8 +104,9 @@ persisting.
 ## State and hot upgrade
 
 `engine.State` is everything that must survive a restart: the mode, the
-current account, session bindings and links, the last known quotas, history
-and window plans. `store.go` writes it atomically (temp file, fsync, rename)
+current account, session bindings and links, the last known quotas, history,
+window plans, and a pause or slow down in progress. Pause and slow-down
+changes are saved right away rather than on the next tick. `store.go` writes it atomically (temp file, fsync, rename)
 with mode `0600`.
 
 A hot upgrade works like this:
@@ -102,8 +115,9 @@ A hot upgrade works like this:
    and `config.yaml` changes, usually by `deployed_version` being bumped.
 2. CLIProxyAPI loads the new library and calls `plugin.register` on it.
 3. CLIProxyAPI calls `plugin.quiesce` on the old instance. The old service
-   stops its loops, persists state one last time and *retires*, so it never
-   writes the state file again.
+   ends any requests it is holding for a pause (retryable rejection), stops
+   its loops, persists state one last time and *retires*, so it never writes
+   the state file again.
 4. The new instance restores the state file and carries on. In-flight
    requests finish on whichever instance started them.
 
@@ -115,6 +129,9 @@ instance.
 * `engine.Engine` guards all state with one mutex. Exported methods take
   the lock; unexported helpers (`pickLocked`, `decide`, `rank`, ...) assume
   it is held.
+* Requests held for a pause or slow down wait in `service.Hold` on timers and
+  a wake-up channel, outside the engine lock. Each wait re-reads
+  `engine.Gate` at least every 5 seconds.
 * `Export` copies state under the lock, so persistence and the panel never
   hold it during I/O.
 * The engine never calls the host. Host callbacks (HTTP, model execute)

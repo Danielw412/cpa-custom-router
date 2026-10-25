@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -200,7 +201,56 @@ def main():
     check(stats.get("websocket_pinned", 0) >= 1, "plugin saw CLIProxyAPI's websocket pin", stats)
     check(mgmt("POST", API + "/mode", {"mode": "auto"})[0] == 200, "resume automatic routing")
 
+    print("pause and slow down")
+    check(mgmt("POST", API + "/pause", {"minutes": 0, "auto_resume_minutes": 0})[0] == 200, "pause until resumed")
+    before_log = len(mock_log())
+    held = {}
+    worker = threading.Thread(target=lambda: held.update(r=respond("p1")))
+    t_pause = time.time()
+    worker.start()
+
+    async def paused_ws():
+        async with WS("ws-p") as w:
+            turn = asyncio.ensure_future(w.turn())
+            await asyncio.sleep(1.5)
+            v = state()
+            check(worker.is_alive() and not turn.done() and v["waiting"] == 2,
+                  "paused HTTP and WebSocket requests wait at the router", v["waiting"])
+            check(len(mock_log()) == before_log, "nothing reached the upstream while paused")
+            check(mgmt("POST", API + "/resume")[0] == 200, "resume")
+            kind, _, entries = await asyncio.wait_for(turn, 15)
+            check(kind == "response.completed" and served(entries), "held WebSocket turn completes after resume", kind)
+
+    asyncio.run(paused_ws())
+    worker.join(15)
+    check(not worker.is_alive() and held["r"][0] == 200 and served(held["r"][1]), "held HTTP request completes after resume")
+    check(state().get("pause") is None and state()["waiting"] == 0, "no pause and nothing waiting after resume")
+    print(f"      held for {time.time() - t_pause:.1f}s, then served")
+
+    check(mgmt("POST", API + "/pause", {"minutes": 0, "auto_resume_minutes": 1})[0] == 200, "pause with auto-resume every minute")
+    t_auto = time.time()
+    st, entries = respond("p2")
+    waited = time.time() - t_auto
+    v = state()
+    check(st == 200 and served(entries) and 1 < waited < 70 and v.get("pause") is not None,
+          "auto-resume lets the waiting request through while the pause continues", round(waited, 1))
+    check(any(h["kind"] == "pause" and "Auto-resume" in h["reason"] for h in v["history"]), "history records the auto-resume")
+    print(f"      auto-resume released the request after {waited:.1f}s")
+    check(mgmt("POST", API + "/resume")[0] == 200, "resume")
+
+    check(mgmt("POST", API + "/slowdown", {"seconds": 2})[0] == 200, "slow down to 2 s per request")
+    t_slow = time.time()
+    st, entries = respond("p3")
+    check(st == 200 and served(entries) and time.time() - t_slow >= 2, "slowed request waits 2 s, then goes", round(time.time() - t_slow, 2))
+    check(mgmt("POST", API + "/slowdown", {"seconds": 0})[0] == 200, "slow down off")
+    t_fast = time.time()
+    respond("p3")
+    check(time.time() - t_fast < 1.5, "full speed again", round(time.time() - t_fast, 2))
+    check(mgmt("POST", API + "/pause", {"minutes": 99999})[0] == 400, "out-of-range pause rejected")
+
     print("hot upgrade keeps runtime state")
+    mgmt("POST", API + "/pause", {"minutes": 60, "auto_resume_minutes": 15})
+    mgmt("POST", API + "/slowdown", {"seconds": 1})
     before = state()
     so_new = os.environ.get("SO_NEXT")
     if so_new:
@@ -216,6 +266,11 @@ def main():
         check(after and after.get("version") != before.get("version"), "new plugin version loaded without restart", after.get("version"))
         check(after["mode"] == before["mode"] and after["active"] == before["active"], "mode and current account preserved")
         check(len(after["history"]) >= len(before["history"]), "history preserved")
+        check(after.get("pause") and after["pause"].get("auto_resume_minutes") == 15 and after["slow_down_seconds"] == 1,
+              "pause and slow down survive the upgrade", after.get("pause"))
+    mgmt("POST", API + "/resume")
+    mgmt("POST", API + "/slowdown", {"seconds": 0})
+    if so_new:
         check(served(respond("s5")[1]) is not None, "routing works after upgrade")
         time.sleep(1)
         check(not any("removed" in h["reason"] for h in state()["history"]), "no spurious 'removed' switch after upgrade")

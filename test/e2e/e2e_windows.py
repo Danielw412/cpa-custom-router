@@ -29,9 +29,13 @@ def main():
     check(len(accounts) == 3, "three accounts known")
     before = len(mock_log())
 
+    # Window starts you scheduled go out even while agents' requests are paused.
+    check(mgmt("POST", API + "/pause", {"minutes": 30})[0] == 200, "pause requests")
     status, _ = mgmt("POST", API + "/windows/start", {})
     check(status == 200, "start all now accepted")
     log = wait("start results for every account", lambda: (lambda l: l if len(l) >= 3 else None)(state()["starter"]["log"]))
+    check(state().get("pause") is not None, "window starts completed while paused")
+    check(mgmt("POST", API + "/resume")[0] == 200, "resume")
     results = {r["account"]: r for r in log}
     sent = [e for e in mock_log()[before:]]
     keys_sent = sorted(e["key"] for e in sent)
