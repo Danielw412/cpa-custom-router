@@ -85,6 +85,13 @@
       <button type="button" class="link danger" id="win-off">Turn everything off</button>
     </div>
     <p class="win-intro" id="win-intro">A 5-hour window only starts at an account's first request. Start it on purpose with one tiny request, so it resets when you want.</p>
+    <div class="win-auto">
+      <div class="field-check">
+        <input id="win-auto" type="checkbox">
+        <label for="win-auto">Auto-start each account's next window a minute after the last one resets</label>
+      </div>
+      <p class="help">One tiny request per window, so a window is always running and resets as early as it can. Skips Off accounts and accounts with a start you scheduled within 5 hours. Saved to config.yaml.</p>
+    </div>
     <div class="win-actions" role="group" aria-label="Start windows on every account">
       <button type="button" class="btn" id="win-now">Start all now</button>
       <form class="win-inline" id="win-delay-form">

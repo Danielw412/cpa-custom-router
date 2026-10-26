@@ -41,8 +41,10 @@ browser session. It shows:
 * **Buttons:** *Use now* (make this account current, stay automatic), *Pin*
   (manual mode: send everything here) and *Automatic*.
 * **Preferences:** ranking, threshold, account order and roles.
-* **5-hour windows:** start or schedule window starts
-  ([routing.md](routing.md#5-hour-windows)).
+* **5-hour windows:** start or schedule window starts, and turn
+  *Auto-start* on or off. Auto-start is saved to `config.yaml` like the
+  preferences; each account's row shows when its next window starts
+  automatically ([routing.md](routing.md#5-hour-windows)).
 * **Recent switches** with their reasons.
 
 Account management, usage statistics and detailed quota pages stay in

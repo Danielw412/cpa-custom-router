@@ -134,6 +134,10 @@ type Account struct {
 	WindowUntil time.Time `json:"window_until,omitempty"`
 	// LastUsed is when the account last served a successful request.
 	LastUsed time.Time `json:"last_used,omitempty"`
+	// autoRetryAt holds off the next automatic window start after one was
+	// tried; autoFails counts failures in a row (both in memory only).
+	autoRetryAt time.Time
+	autoFails   int
 }
 
 // Binding pins a session family (a main agent plus its subagents/forks) to an account.
@@ -237,6 +241,14 @@ func (e *Engine) Configure(settings Settings, warnings []string) {
 	e.settings = settings
 	e.warnings = warnings
 	e.trimHistory()
+	if old.AutoStartWindows != settings.AutoStartWindows {
+		if settings.AutoStartWindows {
+			e.addHistory("window", "", "", "Auto-start on: each account's next 5-hour window starts a minute after the last one resets")
+		} else {
+			e.addHistory("window", "", "", "Auto-start off: 5-hour windows start with the next request or a start you schedule")
+		}
+		old.AutoStartWindows = settings.AutoStartWindows
+	}
 	if !settingsEqual(old, settings) {
 		e.addHistory("settings", "", "", "Routing preferences updated")
 	}

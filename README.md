@@ -31,7 +31,9 @@ the plugin can be upgraded or removed independently, without a restart.
   Auto-resume lets each waiting conversation take a step every few minutes.
   Slow down adds a wait you choose before each request.
 * **5-hour window starts.** Start or schedule an account's 5-hour window
-  with one tiny request, so windows reset when you want them to.
+  with one tiny request, so windows reset when you want them to. Turn on
+  *auto-start* to begin each account's next window a minute after the last
+  one resets, so a window is always running.
 * **Live quota** from every response's rate-limit data, plus light polling
   of idle accounts.
 * **Safe by construction.** Tokens never leave the process. Every data

@@ -33,6 +33,7 @@ places:
 | `history_limit` | `200` | 10–5000 | Routing history entries kept. |
 | `window_start_model` | `gpt-6-luna` | | Model used to start 5-hour windows. |
 | `window_start_effort` | `low` | | Reasoning effort for window starts. |
+| `auto_start_windows` | `false` | | Start each account's next 5-hour window a minute after the last one resets ([routing.md](routing.md#auto-start)). Off accounts are skipped. |
 | `state_file` | `plugins/custom-quota-router/state.json` | | Runtime state. Relative paths resolve against CLIProxyAPI's working directory; `~` is expanded. |
 | `deployed_version` | | | Written by the deploy script. Changing it is what makes CLIProxyAPI reload and pick up a new build. |
 

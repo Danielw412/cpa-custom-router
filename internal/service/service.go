@@ -72,6 +72,8 @@ func (s *Service) Reconfigure(configYAML []byte) {
 		s.Engine.MarkDirty()
 	}
 	s.mu.Unlock()
+	// Auto-start may have just been turned on: start idle windows now.
+	s.WakeStarter()
 }
 
 // Start launches the background loop (idempotent).

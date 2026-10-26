@@ -44,6 +44,9 @@ type AccountView struct {
 	Window        string      `json:"window"`
 	WindowResetAt time.Time   `json:"window_reset_at,omitempty"`
 	Plans         []StartPlan `json:"plans"`
+	// AutoStartAt is when auto-start will start this account's next window
+	// (now or earlier: about to); zero when auto-start is off or skips it.
+	AutoStartAt time.Time `json:"auto_start_at,omitempty"`
 }
 
 // StarterView describes the window-start feature.
@@ -209,6 +212,14 @@ func (e *Engine) View(historyLimit int) View {
 			av.State = "ok"
 		}
 		av.Window, av.WindowResetAt = e.windowState(id, now)
+		if e.settings.AutoStartWindows {
+			if at, ok := e.autoStartAt(id, now); ok {
+				av.AutoStartAt = at
+				if at.Before(now) {
+					av.AutoStartAt = now
+				}
+			}
+		}
 		av.Plans = []StartPlan{}
 		for _, p := range e.st.Starts {
 			if p.Account == id {

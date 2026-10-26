@@ -21,7 +21,7 @@ const (
 // window start (a variable so tests can shorten it).
 var StarterSettleWait = 4 * time.Second
 
-// starterLoop sends scheduled window starts at their due time.
+// starterLoop sends scheduled and automatic window starts at their due time.
 func (s *Service) starterLoop(ctx context.Context, done chan struct{}) {
 	defer close(done)
 	select {
@@ -74,7 +74,7 @@ func (s *Service) runDueStarts(ctx context.Context) {
 // text is never kept.
 func (s *Service) startWindow(ctx context.Context, p engine.StartPlan) engine.StartResult {
 	settings, _ := s.Engine.Settings()
-	r := engine.StartResult{At: time.Now(), Account: p.Account, Model: settings.WindowStartModel, Effort: settings.WindowStartEffort}
+	r := engine.StartResult{At: time.Now(), Account: p.Account, Source: p.Source, Model: settings.WindowStartModel, Effort: settings.WindowStartEffort}
 	authIndex, ok := s.Engine.StartTarget(p.Account)
 	if !ok {
 		r.Status, r.Detail = engine.StartFailed, "account is no longer in CLIProxyAPI"

@@ -93,6 +93,9 @@ type Settings struct {
 	// request that starts an account's 5-hour window.
 	WindowStartModel  string `yaml:"window_start_model" json:"window_start_model"`
 	WindowStartEffort string `yaml:"window_start_effort" json:"window_start_effort"`
+	// AutoStartWindows starts each account's next 5-hour window a minute
+	// after the last one resets, so a window is always running.
+	AutoStartWindows bool `yaml:"auto_start_windows" json:"auto_start_windows"`
 	// HistoryLimit bounds the persisted routing history.
 	HistoryLimit int `yaml:"history_limit" json:"history_limit"`
 	// StateFile stores runtime state (mode, pins, bindings, history).

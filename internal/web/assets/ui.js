@@ -20,6 +20,7 @@
   let busy = false;
   let pauseDirty = false;
   let slowDirty = false;
+  let autoSaving = false;
 
   // ---------------------------------------------------------------- theme
   function parentTheme() {
@@ -441,6 +442,7 @@
     const s = state.starter || { plans: [], log: [] };
     $('win-intro').textContent = `A 5-hour window only starts at an account's first request. Start it on purpose with one tiny ${s.model} (${s.effort} reasoning) request, so it resets when you want.`;
     $('win-off').disabled = !(s.plans && s.plans.length);
+    if (!autoSaving) $('win-auto').checked = !!state.settings.auto_start_windows;
     renderCost(s);
     const list = $('win-list');
     // Don't rebuild under the user's cursor while they edit a start time.
@@ -458,6 +460,11 @@
       const status = el('div', { class: 'win-status' },
         el('span', { class: 'win-state', 'data-window': a.window },
           el('span', { class: 'lamp', 'aria-hidden': 'true' }), stateText));
+      if (isSet(a.auto_start_at)) {
+        const t = new Date(a.auto_start_at).getTime();
+        status.append(el('span', { class: 'win-plan' }, t - Date.now() < 15000 ? 'Auto-start: starting now'
+          : `Auto-start: next window ${clock(a.auto_start_at)}${t - Date.now() < 6 * 3600 * 1000 ? ` (${until(a.auto_start_at)})` : ''}`));
+      }
       for (const p of a.plans || []) {
         status.append(el('span', { class: 'win-plan' }, planText(p, a),
           el('button', { type: 'button', class: 'link', 'data-action': 'win-cancel', 'data-id': p.id,
@@ -630,6 +637,27 @@
     if (m == null) { toast('Enter 1 to 720 minutes.', true); return; }
     await act('windows/start', { stagger_minutes: m }, `Starting one window now and the rest ${m} min apart`);
     settleRefresh();
+  }
+  // Auto-start is a setting: save it through CLIProxyAPI's config API like
+  // the preferences, which writes config.yaml and hot-applies it.
+  async function toggleAutoStart(ev) {
+    const on = ev.target.checked;
+    autoSaving = true;
+    ev.target.disabled = true;
+    try {
+      await request(CONFIG, 'PATCH', { auto_start_windows: on });
+      await sleep(400);
+      autoSaving = false;
+      await refresh();
+      toast(on ? 'Auto-start is on. Idle windows start now; each next one starts a minute after a reset.' : 'Auto-start is off');
+      if (on) settleRefresh();
+    } catch (err) {
+      ev.target.checked = !on;
+      handleError(err, 'Auto-start was not changed');
+    } finally {
+      autoSaving = false;
+      ev.target.disabled = false;
+    }
   }
   const cancelPlan = (id) => act('windows/cancel', { id }, 'Scheduled start cancelled');
   const turnOff = () => act('windows/cancel', {}, 'All scheduled window starts are off');
@@ -850,6 +878,7 @@
     $('win-delay-form').addEventListener('submit', startDelayed);
     $('win-stagger-form').addEventListener('submit', startStaggered);
     $('win-off').addEventListener('click', turnOff);
+    $('win-auto').addEventListener('change', toggleAutoStart);
     $('pause-form').addEventListener('submit', pauseNow);
     $('pause-form').addEventListener('input', () => { pauseDirty = true; });
     $('pause-auto').addEventListener('change', () => { $('pause-auto-minutes').disabled = !$('pause-auto').checked; });

@@ -95,8 +95,9 @@ limits, at most 200 waiting requests, and release on quiesce and shutdown
 * **Maintenance loop** (every 15 s): refresh the account roster (every 30 s),
   let the engine re-evaluate time-based state, poll up to 3 idle accounts'
   quota, write queued events to the log, and persist state if it changed.
-* **Window starter:** sleeps until the next scheduled 5-hour window start,
-  then checks quota, sends the start request and records the result.
+* **Window starter:** sleeps until the next scheduled 5-hour window start
+  or, with auto-start on, the next window reset (waking at least every
+  30 s), then checks quota, sends the start request and records the result.
 
 Each pass recovers from panics, so one bad pass never stops refreshing or
 persisting.

@@ -79,6 +79,24 @@ def main():
     mins = (datetime.fromisoformat(plans[0]["at"]) - datetime.now(timezone.utc)).total_seconds() / 60
     check(24 <= mins <= 26, "it starts 25 minutes from now", round(mins, 1))
     mgmt("POST", API + "/windows/cancel", {})
+
+    print("auto-start")
+    cfg = "/v8/management/config/plugins/configs/custom-quota-router"
+    before = len(mock_log())
+    status, _ = mgmt("PATCH", cfg, {"auto_start_windows": True})
+    check(status == 200, "auto-start turned on through CLIProxyAPI's config API", status)
+    wait("plugin hot-applied auto-start", lambda: state()["settings"].get("auto_start_windows") is True)
+    with open(os.path.join(os.environ.get("STAGE", "/tmp/cqr-staging"), "config.yaml")) as f:
+        check("auto_start_windows: true" in f.read(), "auto-start saved in config.yaml")
+    check(any("Auto-start on" in h["reason"] for h in state()["history"]), "turning it on is in the history")
+    time.sleep(3)
+    # The staging accounts are API keys: their quota can't be read before
+    # sending, so auto-start leaves them alone.
+    check(len(mock_log()) == before, "nothing sent for accounts whose quota can't be checked first")
+    check(all(not a.get("auto_start_at", "0001").startswith("2") for a in state()["accounts"]), "no automatic start shown for them")
+    status, _ = mgmt("PATCH", cfg, {"auto_start_windows": False})
+    check(status == 200, "auto-start turned off")
+    wait("plugin hot-applied auto-start off", lambda: state()["settings"].get("auto_start_windows") is False)
     print(f"\nALL {len(PASSED)} WINDOW CHECKS PASSED")
 
 

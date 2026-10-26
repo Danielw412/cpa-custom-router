@@ -26,11 +26,20 @@ const (
 	// window whose reset is within this slack of that is treated as idle.
 	windowSlack = 2 * time.Minute
 	shortWindow = 5 * time.Hour
+	// Auto-start waits this long after a window resets, so its request
+	// can't land in the window that just ended.
+	autoStartDelay = time.Minute
+	// autoStartRetry holds off another automatic start of the same account
+	// after one was tried. Failures in a row double it, up to 8 times, so an
+	// account that can't be started costs a request now and then, not one
+	// every loop.
+	autoStartRetry = 15 * time.Minute
 
 	SourceNow     = "now"
 	SourceDelay   = "delay"
 	SourceStagger = "stagger"
 	SourceManual  = "manual"
+	SourceAuto    = "auto"
 
 	WindowRunning = "running"
 	WindowIdle    = "idle"
@@ -56,6 +65,7 @@ type StartPlan struct {
 type StartResult struct {
 	At              time.Time `json:"at"`
 	Account         string    `json:"account"`
+	Source          string    `json:"source,omitempty"`
 	Status          string    `json:"status"`
 	Detail          string    `json:"detail,omitempty"`
 	Model           string    `json:"model,omitempty"`
@@ -257,7 +267,8 @@ func (e *Engine) CancelStarts(id, account string) (int, error) {
 }
 
 // DueStarts removes and returns plans that are due. Daily plans are moved to
-// their next day; plans overdue by too long are logged as missed.
+// their next day; plans overdue by too long are logged as missed. With
+// auto-start on, accounts whose next window should start now are added.
 func (e *Engine) DueStarts() []StartPlan {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -285,10 +296,24 @@ func (e *Engine) DueStarts() []StartPlan {
 		e.dirty = true
 	}
 	e.st.Starts = kept
+	if e.settings.AutoStartWindows {
+		planned := map[string]bool{}
+		for _, p := range due {
+			planned[p.Account] = true
+		}
+		for _, id := range e.startOrder() {
+			if at, ok := e.autoStartAt(id, now); ok && !at.After(now) && !planned[id] {
+				// Hold off the next try now, so nothing can send twice.
+				e.st.Accounts[id].autoRetryAt = now.Add(autoStartRetry)
+				due = append(due, StartPlan{ID: e.planID(len(due)), Account: id, At: now, Source: SourceAuto})
+			}
+		}
+	}
 	return due
 }
 
-// NextStartAt returns the earliest scheduled start, or zero.
+// NextStartAt returns when the next start falls due (a scheduled start, or
+// an automatic one), or zero.
 func (e *Engine) NextStartAt() time.Time {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -298,7 +323,71 @@ func (e *Engine) NextStartAt() time.Time {
 			next = p.At
 		}
 	}
+	if e.settings.AutoStartWindows {
+		now := e.now()
+		for _, id := range e.knownIDs() {
+			if at, ok := e.autoStartAt(id, now); ok && (next.IsZero() || at.Before(next)) {
+				next = at
+			}
+		}
+	}
 	return next
+}
+
+// autoStartAt is when auto-start should start an account's next 5-hour
+// window: a minute after the last one ended (right away if it ended longer
+// ago). ok is false for accounts it leaves alone: Off, blocked, unavailable
+// or out of weekly quota; quota it can't read before sending (API keys); a
+// window whose state is unknown; and an account with a scheduled start due
+// before that window would end, so your own start times still decide.
+func (e *Engine) autoStartAt(id string, now time.Time) (time.Time, bool) {
+	a := e.st.Accounts[id]
+	if a == nil || a.authIndex == "" || !e.usableAuto(id, now) {
+		return time.Time{}, false
+	}
+	if a.Quota != nil && a.Quota.Long != nil {
+		if r, _ := a.Quota.Long.Remaining(now); r <= 0 {
+			return time.Time{}, false
+		}
+	}
+	var ended time.Time
+	switch state, reset := e.windowState(id, now); state {
+	case WindowRunning:
+		ended = reset
+	case WindowIdle:
+		ended = lastWindowEnd(a, now)
+	default:
+		return time.Time{}, false
+	}
+	at := a.autoRetryAt
+	if !ended.IsZero() && ended.Add(autoStartDelay).After(at) {
+		at = ended.Add(autoStartDelay)
+	}
+	from := at
+	if from.Before(now) {
+		from = now
+	}
+	for _, p := range e.st.Starts {
+		if p.Account == id && p.At.Before(from.Add(shortWindow)) {
+			return time.Time{}, false
+		}
+	}
+	return at, true
+}
+
+// lastWindowEnd is when an idle account's last 5-hour window ended, or zero
+// if that isn't known (for example after Codex reset the limits early).
+func lastWindowEnd(a *Account, now time.Time) time.Time {
+	var end time.Time
+	if !a.WindowUntil.After(now) {
+		end = a.WindowUntil
+	}
+	if a.Quota != nil && a.Quota.Short != nil {
+		if r := a.Quota.Short.ResetAt; !r.After(now) && r.After(end) {
+			end = r
+		}
+	}
+	return end
 }
 
 // StartTarget returns what the service needs to start an account's window.
@@ -336,6 +425,20 @@ func (e *Engine) UsedPercents(id string) (short, long *float64) {
 func (e *Engine) RecordStart(r StartResult) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if a := e.st.Accounts[r.Account]; a != nil && r.Source == SourceAuto {
+		switch r.Status {
+		case StartRunning:
+			// A request got there first and nothing was sent, so there is
+			// nothing to report. The next try follows that window's reset.
+			a.autoRetryAt = time.Time{}
+			return
+		case StartFailed:
+			a.autoFails++
+			a.autoRetryAt = e.now().Add(autoStartRetry << min(a.autoFails-1, 3))
+		default:
+			a.autoFails = 0
+		}
+	}
 	if r.Status == StartStarted && !r.ResetAt.IsZero() {
 		a := e.account(r.Account)
 		if r.ResetAt.After(a.WindowUntil) {
@@ -352,6 +455,20 @@ func (e *Engine) logStart(r StartResult) {
 		e.st.StartLog = append([]StartResult(nil), e.st.StartLog[over:]...)
 	}
 	name := e.label(r.Account)
+	if r.Source == SourceAuto {
+		switch r.Status {
+		case StartStarted:
+			e.addHistory("window", "", r.Account, fmt.Sprintf("Auto-start: started %s's next 5-hour window (resets %s)", name, clockText(r.ResetAt)))
+			return
+		case StartFailed:
+			retry := "soon"
+			if a := e.st.Accounts[r.Account]; a != nil && a.autoRetryAt.After(e.now()) {
+				retry = "in " + durText(a.autoRetryAt.Sub(e.now()).Round(time.Minute))
+			}
+			e.addHistory("fallback", "", r.Account, fmt.Sprintf("Auto-start could not start %s's 5-hour window: %s. It tries again %s", name, r.Detail, retry))
+			return
+		}
+	}
 	switch r.Status {
 	case StartStarted:
 		e.addHistory("window", "", r.Account, fmt.Sprintf("Started %s's 5-hour window (resets %s)", name, clockText(r.ResetAt)))

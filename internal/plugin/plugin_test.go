@@ -450,6 +450,66 @@ func TestWindowStartsThroughRPC(t *testing.T) {
 	}
 }
 
+func TestAutoStartThroughRPC(t *testing.T) {
+	p, fh, state := setup(t)
+	fh.mu.Lock()
+	fh.quota = map[string][2]float64{"a1": {0, 18000}, "b2": {25, 3600}} // A idle, B running
+	fh.mu.Unlock()
+	type view struct {
+		Settings struct {
+			AutoStartWindows bool `json:"auto_start_windows"`
+		}
+		Accounts []struct {
+			ID, Window string
+		}
+		Starter struct {
+			Log []struct {
+				Account, Source, Status string
+			}
+		}
+	}
+	read := func() view {
+		_, _, body := mgmt(t, p, "GET", "/v0/management/custom-quota-router/state", nil)
+		var v view
+		if err := json.Unmarshal(body, &v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	mgmt(t, p, "POST", "/v0/management/custom-quota-router/refresh", nil)
+	waitFor(t, "fresh readings", func() bool {
+		windows := map[string]string{}
+		for _, a := range read().Accounts {
+			windows[a.ID] = a.Window
+		}
+		return windows[idA] == "idle" && windows[idB] == "running"
+	})
+	fh.mu.Lock()
+	sent := len(fh.executed)
+	fh.mu.Unlock()
+	if sent != 0 {
+		t.Fatalf("nothing starts while auto-start is off: %d", sent)
+	}
+
+	cfg := "switch_threshold_percent: 5\naccount_order: [" + idB + ", " + idA + "]\nauto_start_windows: true\nstate_file: " + state + "\n"
+	call(t, p, "plugin.reconfigure", map[string]any{"config_yaml": []byte(cfg)})
+	waitFor(t, "the automatic start", func() bool { return len(read().Starter.Log) >= 1 })
+	time.Sleep(200 * time.Millisecond) // a second start would show up by now
+	v := read()
+	fh.mu.Lock()
+	executed := append([]map[string]any(nil), fh.executed...)
+	fh.mu.Unlock()
+	if len(executed) != 1 || executed[0]["auth_id"] != idA {
+		t.Fatalf("exactly one start, for the idle account: %v", executed)
+	}
+	if !v.Settings.AutoStartWindows || len(v.Starter.Log) != 1 {
+		t.Fatalf("state: %+v", v)
+	}
+	if l := v.Starter.Log[0]; l.Account != idA || l.Source != "auto" || l.Status != "started" {
+		t.Fatalf("start result: %+v", l)
+	}
+}
+
 func TestPauseAndSlowDownThroughRPC(t *testing.T) {
 	p, _, statePath := setup(t)
 	const api = "/v0/management/custom-quota-router"

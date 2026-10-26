@@ -263,6 +263,7 @@ func registration() registrationBody {
 				{Name: "manual_fallback", Type: enum, Default: d.ManualFallback, EnumValues: []string{engine.FallbackAuto, engine.FallbackStrict}, Description: "When the pinned account is unavailable: auto routes automatically, strict rejects requests."},
 				{Name: "quota_poll_minutes", Type: integer, Default: d.QuotaPollMinutes, Description: "How often idle accounts' quota is checked. 0 = live traffic only."},
 				{Name: "model_level_limits", Type: boolean, Default: false, Description: "Scope usage-limit failures to the model that hit them (enable together with CLIProxyAPI's upstream.codex.model-level-cooling)."},
+				{Name: "auto_start_windows", Type: boolean, Default: false, Description: "Start each account's next 5-hour window with one tiny request a minute after the last one resets, so a window is always running. Off accounts are skipped."},
 				{Name: "stale_after_minutes", Type: integer, Default: d.StaleAfterMinutes, Description: "Quota data older than this is flagged as stale."},
 				{Name: "history_limit", Type: integer, Default: d.HistoryLimit, Description: "Routing history entries to keep."},
 				{Name: "state_file", Type: str, Default: d.StateFile, Description: "Runtime state file (mode, pins, session bindings, history)."},

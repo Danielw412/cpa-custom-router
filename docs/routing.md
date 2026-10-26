@@ -263,3 +263,29 @@ percentages, never the prompt or reply.
 Starts that fall due while CLIProxyAPI is down are reported as missed rather
 than sent late. Starting a 5-hour window also starts the weekly window if it
 isn't already running.
+
+### Auto-start
+
+With **Auto-start** on (`auto_start_windows: true`, off by default), the
+router starts each account's next 5-hour window one minute after the last
+one resets, so a window is always running and resets as early as it can.
+Turning it on starts every idle window right away. The minute's wait keeps
+the request from landing in the window that just ended.
+
+Each automatic start is an ordinary start: it reads quota first and sends
+nothing if a request has already started the window. Nothing is reported in
+that case. Auto-start leaves an account alone when:
+
+* it is *Off*, out of weekly quota, blocked by a usage limit, or unavailable
+  in CLIProxyAPI;
+* its quota can't be read before sending (API-key credentials), or its
+  window state isn't known yet;
+* you scheduled a start for it that falls before the window auto-start would
+  begin ends. Your start time decides, and auto-start continues after that
+  window resets. With a daily start at 08:00, for example, auto-start keeps
+  windows running through the day and lets the one before 08:00 wait.
+
+After an automatic start, the same account isn't started automatically
+again for 15 minutes. A start that fails is retried after 15 minutes, then
+30, 60 and at most 120 minutes while it keeps failing. Like scheduled
+starts, automatic starts go out while requests are paused.
